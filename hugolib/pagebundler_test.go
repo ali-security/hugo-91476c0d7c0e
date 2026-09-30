@@ -765,6 +765,8 @@ func TestHTMLFilesIsue11999(t *testing.T) {
 disableKinds = ["taxonomy", "term", "rss", "sitemap", "robotsTXT", "404"]
 [permalinks]
 posts = "/myposts/:slugorfilename"
+[security]
+allowContent = ['.*']
 -- content/posts/markdown-without-frontmatter.md --
 -- content/posts/html-without-frontmatter.html --
 <html>hello</html>
@@ -840,6 +842,8 @@ func TestBundleDuplicatePagesAndResources(t *testing.T) {
 -- hugo.toml --
 baseURL = "https://example.com"
 disableKinds = ["taxonomy", "term"]
+[security]
+allowContent = ['.*']
 -- content/mysection/mybundle/index.md --
 -- content/mysection/mybundle/index.html --
 -- content/mysection/mybundle/p1.md --

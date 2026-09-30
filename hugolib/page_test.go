@@ -762,6 +762,8 @@ func TestSummaryManualSplitHTML(t *testing.T) {
 	t.Parallel()
 	Test(t, `
 -- hugo.toml --
+[security]
+allowContent = ['.*']
 -- content/simple.html --
 ---
 title: Simple

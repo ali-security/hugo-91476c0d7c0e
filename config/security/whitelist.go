@@ -22,12 +22,22 @@ import (
 
 const (
 	acceptNoneKeyword = "none"
+
+	// negationPrefix marks a whitelist pattern as a deny rule.
+	negationPrefix = "! "
 )
 
 // Whitelist holds a whitelist.
+//
+// Patterns are regular expressions. A pattern prefixed with "! "
+// is a deny rule: a name that matches any deny rule is rejected
+// even if it matches an allow rule.
+// A whitelist made up exclusively of deny rules implicitly allows
+// names that do not match any of them.
 type Whitelist struct {
 	acceptNone bool
-	patterns   []*regexp.Regexp
+	allow      []*regexp.Regexp
+	deny       []*regexp.Regexp
 
 	// Store this for debugging/error reporting
 	patternsStrings []string
@@ -44,7 +54,8 @@ func (w Whitelist) MarshalJSON() ([]byte, error) {
 
 // NewWhitelist creates a new Whitelist from zero or more patterns.
 // An empty patterns list or a pattern with the value 'none' will create
-// a whitelist that will Accept none.
+// a whitelist that will Accept none. Patterns prefixed with "! " act as
+// deny rules; see Whitelist.
 func NewWhitelist(patterns ...string) (Whitelist, error) {
 	if len(patterns) == 0 {
 		return Whitelist{acceptNone: true}, nil
@@ -71,21 +82,30 @@ func NewWhitelist(patterns ...string) (Whitelist, error) {
 		}, nil
 	}
 
-	var patternsr []*regexp.Regexp
+	var allow, deny []*regexp.Regexp
 
 	for i := range patterns {
 		p := strings.TrimSpace(patterns[i])
 		if p == "" {
 			continue
 		}
-		re, err := regexp.Compile(p)
+		raw := p
+		negate := strings.HasPrefix(p, negationPrefix)
+		if negate {
+			raw = p[len(negationPrefix):]
+		}
+		re, err := regexp.Compile(raw)
 		if err != nil {
 			return Whitelist{}, fmt.Errorf("failed to compile whitelist pattern %q: %w", p, err)
 		}
-		patternsr = append(patternsr, re)
+		if negate {
+			deny = append(deny, re)
+		} else {
+			allow = append(allow, re)
+		}
 	}
 
-	return Whitelist{patterns: patternsr, patternsStrings: patternsStrings}, nil
+	return Whitelist{allow: allow, deny: deny, patternsStrings: patternsStrings}, nil
 }
 
 // MustNewWhitelist creates a new Whitelist from zero or more patterns and panics on error.
@@ -103,7 +123,19 @@ func (w Whitelist) Accept(name string) bool {
 		return false
 	}
 
-	for _, p := range w.patterns {
+	for _, p := range w.deny {
+		if p.MatchString(name) {
+			return false
+		}
+	}
+
+	if len(w.allow) == 0 {
+		// A whitelist with only deny rules implicitly allows everything
+		// that is not denied. An empty (zero-value) whitelist rejects.
+		return len(w.deny) > 0
+	}
+
+	for _, p := range w.allow {
 		if p.MatchString(name) {
 			return true
 		}

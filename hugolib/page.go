@@ -610,7 +610,8 @@ func (p *pageState) getContentConverter() converter.Converter {
 		markup := p.m.pageConfig.ContentMediaType.SubType
 
 		if markup == "html" {
-			// Only used for shortcode inner content.
+			// Only reachable for shortcode inner content rendering; file-based
+			// HTML pages are gated at setMetaPost via security.allowContent.
 			markup = "markdown"
 		}
 		p.contentConverter, err = p.m.newContentConverter(p, markup)

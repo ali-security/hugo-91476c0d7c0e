@@ -346,6 +346,7 @@ func TestShouldNotWriteZeroLengthFilesToDestination(t *testing.T) {
 	c := qt.New(t)
 
 	cfg, fs := newTestCfg()
+	cfg.Set("security", map[string]any{"allowContent": []string{".*"}})
 	configs, err := loadTestConfigFromProvider(cfg)
 	c.Assert(err, qt.IsNil)
 
@@ -534,6 +535,7 @@ func doTestSectionNaming(t *testing.T, canonify, uglify, pluralize bool) {
 	cfg.Set("uglyURLs", uglify)
 	cfg.Set("pluralizeListTitles", pluralize)
 	cfg.Set("canonifyURLs", canonify)
+	cfg.Set("security", map[string]any{"allowContent": []string{".*"}})
 
 	configs, err := loadTestConfigFromProvider(cfg)
 	c.Assert(err, qt.IsNil)
