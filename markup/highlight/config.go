@@ -16,6 +16,7 @@ package highlight
 
 import (
 	"fmt"
+	gohtml "html"
 	"strconv"
 	"strings"
 
@@ -88,7 +89,8 @@ type Config struct {
 func (cfg Config) toHTMLOptions() []html.Option {
 	var lineAnchors string
 	if cfg.LineAnchors != "" {
-		lineAnchors = cfg.LineAnchors + "-"
+		// Chroma writes this verbatim into id and href attributes.
+		lineAnchors = gohtml.EscapeString(cfg.LineAnchors) + "-"
 	}
 	options := []html.Option{
 		html.TabWidth(cfg.TabWidth),
