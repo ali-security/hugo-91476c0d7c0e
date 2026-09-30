@@ -33,6 +33,7 @@ func TestTailwindV4Basic(t *testing.T) {
 
 	files := `
 -- hugo.toml --
+security.exec.allow = ['^go$', '^git$', '^node$', '^tailwindcss$']
 -- package.json --
 {
   "license": "MIT",
@@ -83,6 +84,8 @@ func TestTailwindCSSNoInlineImportsIssue13719(t *testing.T) {
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
 theme = 'my-theme'
+
+security.exec.allow = ['^go$', '^git$', '^node$', '^tailwindcss$']
 
 [[module.mounts]]
 source = 'assets'
@@ -165,6 +168,8 @@ func TestTailwindCSSNodePermissions(t *testing.T) {
 				files := fmt.Sprintf(`
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+[security.exec]
+allow = ['^go$', '^git$', '^node$', '^tailwindcss$']
 [security.node.permissions]
 disable = %t
 -- probe.js --
@@ -218,6 +223,8 @@ module.exports = function () {};
 				files := fmt.Sprintf(`
 -- hugo.toml --
 disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+[security.exec]
+allow = ['^go$', '^git$', '^node$', '^tailwindcss$']
 [security.node.permissions]
 disable = %t
 -- assets/css/main.css --
