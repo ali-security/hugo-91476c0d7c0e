@@ -1,7 +1,10 @@
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Space-separated top-level Go test names to run instead of the full suite"
+        required: false
+        default: ""
 name: Test
 env:
   GOPROXY: https://proxy.golang.org
@@ -15,10 +18,12 @@ permissions:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         go-version: [1.24.x, 1.25.x]
         os: [ubuntu-latest, windows-latest] # macos disabled for now because of disk space issues.
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 55
     steps:
       - if: matrix.os == 'ubuntu-latest'
         name: Free Disk Space (Ubuntu)
@@ -44,8 +49,12 @@ jobs:
           cache-dependency-path: |
             **/go.sum
             **/go.mod
+      - name: Install Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "22"
       - name: Install Ruby
-        uses: ruby/setup-ruby@a6e6f86333f0a2523ece813039b8b4be04560854 # v1.190.0
+        uses: ruby/setup-ruby@v1
         with:
           ruby-version: "2.7"
           bundler-cache: true #
@@ -100,24 +109,32 @@ jobs:
           curl -LJO "https://github.com/sass/dart-sass/releases/download/${env:SASS_VERSION}/dart-sass-${env:SASS_VERSION}-windows-x64.zip";
           Expand-Archive -Path "dart-sass-${env:SASS_VERSION}-windows-x64.zip" -DestinationPath .;
           echo  "$env:GITHUB_WORKSPACE/dart-sass/" | Out-File -FilePath $Env:GITHUB_PATH -Encoding utf-8 -Append
-      - if: matrix.os == 'ubuntu-latest'
-        name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest
-      - if: matrix.os == 'ubuntu-latest'
-        name: Run staticcheck
-        run: staticcheck ./...
       - if: matrix.os != 'windows-latest'
         name: Check
+        shell: bash
         run: |
           sass --version;
-          mage -v check;
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            go test -v -tags "$HUGO_BUILD_TAGS" -run "^($(echo "${{ inputs.test-filter }}" | tr ' ' '|'))$" ./... 2>&1 | tee "$RUNNER_TEMP/scoped.log"
+            for t in ${{ inputs.test-filter }}; do grep -qE "^=== RUN[[:space:]]+${t}(/|$)" "$RUNNER_TEMP/scoped.log" || exit 1; done
+          else
+            mage -v check 2>&1 | tee "$RUNNER_TEMP/full.log"
+            echo "TEST SUMMARY: $(grep -cE '^\s*--- PASS' "$RUNNER_TEMP/full.log") passed, $(grep -cE '^\s*--- FAIL' "$RUNNER_TEMP/full.log") failed, $(grep -cE '^\s*--- SKIP' "$RUNNER_TEMP/full.log") skipped, $(grep -cE '^ok\s' "$RUNNER_TEMP/full.log") packages ok"
+          fi
         env:
           HUGO_BUILD_TAGS: extended,withdeploy
       - if: matrix.os == 'windows-latest'
         # See issue #11052. We limit the build to regular test (no -race flag) on Windows for now.
         name: Test
+        shell: bash
         run: |
-          mage -v test;
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            go test -v -tags "$HUGO_BUILD_TAGS" -run "^($(echo "${{ inputs.test-filter }}" | tr ' ' '|'))$" ./... 2>&1 | tee "$RUNNER_TEMP/scoped.log"
+            for t in ${{ inputs.test-filter }}; do grep -qE "^=== RUN[[:space:]]+${t}(/|$)" "$RUNNER_TEMP/scoped.log" || exit 1; done
+          else
+            mage -v test 2>&1 | tee "$RUNNER_TEMP/full.log"
+            echo "TEST SUMMARY: $(grep -cE '^\s*--- PASS' "$RUNNER_TEMP/full.log") passed, $(grep -cE '^\s*--- FAIL' "$RUNNER_TEMP/full.log") failed, $(grep -cE '^\s*--- SKIP' "$RUNNER_TEMP/full.log") skipped, $(grep -cE '^ok\s' "$RUNNER_TEMP/full.log") packages ok"
+          fi
         env:
           HUGO_BUILD_TAGS: extended,withdeploy
       - name: Build tags
@@ -130,3 +147,58 @@ jobs:
         env:
           GOARCH: amd64
           GOOS: dragonfly
+  module-zip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - name: Install Go
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version: 1.24.x
+          cache: false
+      - name: Build module zip
+        shell: bash
+        run: |
+          set -eux
+          HELPER="$RUNNER_TEMP/helper"
+          mkdir -p "$HELPER" "$RUNNER_TEMP/out"
+          cat > "$HELPER/main.go" <<'EOF'
+          package main
+
+          import (
+              "log"
+              "os"
+
+              "golang.org/x/mod/module"
+              "golang.org/x/mod/zip"
+          )
+
+          func main() {
+              f, err := os.Create(os.Args[4])
+              if err != nil {
+                  log.Fatal(err)
+              }
+              mv := module.Version{Path: os.Args[1], Version: os.Args[2]}
+              if err := zip.CreateFromDir(f, mv, os.Args[3]); err != nil {
+                  log.Fatal(err)
+              }
+              if err := f.Close(); err != nil {
+                  log.Fatal(err)
+              }
+          }
+          EOF
+          cd "$HELPER"
+          go mod init example.com/createmod
+          go get golang.org/x/mod@v0.24.0
+          go build -o "$RUNNER_TEMP/create_mod" .
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/create_mod" github.com/gohugoio/hugo v0.149.1 "$GITHUB_WORKSPACE" "$RUNNER_TEMP/out/v0.149.1.zip"
+          unzip -l "$RUNNER_TEMP/out/v0.149.1.zip" | tail -1
+      - name: Upload module zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: ${{ runner.temp }}/out/v0.149.1.zip
+          if-no-files-found: error

@@ -1,9 +1,7 @@
 name: Build Docker image
 
 on:
-  release:
-    types: [published]
-  pull_request:
+  workflow_dispatch:
 permissions:
   packages: write
 
@@ -12,7 +10,9 @@ env:
 
 jobs:
   build:
+    if: false
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
