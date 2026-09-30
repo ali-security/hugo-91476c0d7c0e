@@ -135,7 +135,7 @@ func TestToTOML(t *testing.T) {
 	got := DefaultConfig.ToTOML()
 
 	c.Assert(got, qt.Equals,
-		"[security]\n  allowContent = ['! ^text/html$']\n  enableInlineShortcodes = false\n\n  [security.exec]\n    allow = ['^(dart-)?sass(-embedded)?$', '^go$', '^git$', '^node$', '^postcss$']\n    osEnv = ['(?i)^((HTTPS?|NO)_PROXY|PATH(EXT)?|APPDATA|TE?MP|TERM|GO\\w+|(XDG_CONFIG_)?HOME|USERPROFILE|SSH_AUTH_SOCK|DISPLAY|LANG|SYSTEMDRIVE)$']\n\n  [security.funcs]\n    getenv = ['^HUGO_', '^CI$']\n\n  [security.http]\n    methods = ['(?i)GET|POST']\n    urls = ['.*']\n\n  [security.node]\n    [security.node.permissions]\n      allowAddons = ['tailwindcss']\n      allowChildProcess = ['tailwindcss']\n      allowRead = ['.']\n      allowWorker = ['tailwindcss']\n      allowWrite = []\n      disable = false",
+		"[security]\n  allowContent = ['! ^text/html$', '! ^text/org$']\n  enableInlineShortcodes = false\n\n  [security.exec]\n    allow = ['^(dart-)?sass(-embedded)?$', '^go$', '^git$', '^node$', '^postcss$']\n    osEnv = ['(?i)^((HTTPS?|NO)_PROXY|PATH(EXT)?|APPDATA|TE?MP|TERM|GO\\w+|(XDG_CONFIG_)?HOME|USERPROFILE|SSH_AUTH_SOCK|DISPLAY|LANG|SYSTEMDRIVE)$']\n\n  [security.funcs]\n    getenv = ['^HUGO_', '^CI$']\n\n  [security.http]\n    methods = ['(?i)GET|POST']\n    urls = ['.*']\n\n  [security.node]\n    [security.node.permissions]\n      allowAddons = ['tailwindcss']\n      allowChildProcess = ['tailwindcss']\n      allowRead = ['.']\n      allowWorker = ['tailwindcss']\n      allowWrite = []\n      disable = false",
 	)
 }
 
@@ -187,6 +187,15 @@ func TestCheckAllowedContent(t *testing.T) {
 		c.Assert(err, qt.ErrorMatches, `(?s).*"text/html" is not whitelisted in policy "security\.allowContent".*`)
 	})
 
+	c.Run("text/org denied by default", func(c *qt.C) {
+		c.Parallel()
+		pc, err := DecodeConfig(config.New())
+		c.Assert(err, qt.IsNil)
+		err = pc.CheckAllowedContent("text/org")
+		c.Assert(err, qt.IsNotNil)
+		c.Assert(err, qt.ErrorMatches, `(?s).*"text/org" is not whitelisted in policy "security\.allowContent".*`)
+	})
+
 	c.Run("Other content types allowed by default", func(c *qt.C) {
 		c.Parallel()
 		pc, err := DecodeConfig(config.New())
@@ -194,7 +203,6 @@ func TestCheckAllowedContent(t *testing.T) {
 		for _, mt := range []string{
 			"text/markdown",
 			"text/asciidoc",
-			"text/x-org",
 			"text/rst",
 			"text/pandoc",
 		} {

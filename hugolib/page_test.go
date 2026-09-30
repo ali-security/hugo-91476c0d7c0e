@@ -1427,7 +1427,10 @@ func TestChompBOM(t *testing.T) {
 // https://github.com/gohugoio/hugo/issues/5381
 func TestPageManualSummary(t *testing.T) {
 	b := newTestSitesBuilder(t)
-	b.WithSimpleConfigFile()
+	b.WithSimpleConfigFileAndSettings(map[string]any{
+		"baseURL":  "http://example.com/",
+		"security": map[string]any{"allowContent": []string{".*"}},
+	})
 
 	b.WithContent("page-md-shortcode.md", `---
 title: "Hugo"
@@ -1980,6 +1983,8 @@ func TestHomePageIsLeafBundle(t *testing.T) {
 -- hugo.toml --
 defaultContentLanguage = 'de'
 defaultContentLanguageInSubdir = true
+[security]
+allowContent = ['.*']
 [languages.de]
 weight = 1
 [languages.en]

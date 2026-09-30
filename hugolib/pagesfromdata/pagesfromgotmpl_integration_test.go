@@ -140,6 +140,7 @@ func TestPagesFromGoTmplAsciidocAndSimilar(t *testing.T) {
 disableKinds = ["taxonomy", "term", "rss", "sitemap"]
 baseURL = "https://example.com"
 [security]
+allowContent = ['.*']
 [security.exec]
 allow = ['asciidoctor', 'pandoc','rst2html', 'python']
 -- layouts/_default/single.html --
