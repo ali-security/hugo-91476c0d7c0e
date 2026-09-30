@@ -228,12 +228,12 @@ var _ FilesystemUnwrapper = (*filesystemsWrapper)(nil)
 
 // NewBasePathFs creates a new BasePathFs.
 func NewBasePathFs(source afero.Fs, path string) afero.Fs {
-	return WrapFilesystem(afero.NewBasePathFs(source, path), source)
+	return WrapFilesystem(afero.NewBasePathFs(newOverlayLstaterFs(source), path), source)
 }
 
 // NewReadOnlyFs creates a new ReadOnlyFs.
 func NewReadOnlyFs(source afero.Fs) afero.Fs {
-	return WrapFilesystem(afero.NewReadOnlyFs(source), source)
+	return WrapFilesystem(afero.NewReadOnlyFs(newOverlayLstaterFs(source)), source)
 }
 
 // WrapFilesystem is typically used to wrap a afero.BasePathFs to allow
@@ -241,6 +241,8 @@ func NewReadOnlyFs(source afero.Fs) afero.Fs {
 func WrapFilesystem(container, content afero.Fs) afero.Fs {
 	return filesystemsWrapper{Fs: container, content: content}
 }
+
+var _ afero.Lstater = (*filesystemsWrapper)(nil)
 
 type filesystemsWrapper struct {
 	afero.Fs
@@ -251,12 +253,76 @@ func (w filesystemsWrapper) UnwrapFilesystem() afero.Fs {
 	return w.content
 }
 
+func (w filesystemsWrapper) LstatIfPossible(name string) (os.FileInfo, bool, error) {
+	if lstater, ok := w.Fs.(afero.Lstater); ok {
+		return lstater.LstatIfPossible(name)
+	}
+	fi, err := w.Fs.Stat(name)
+	return fi, false, err
+}
+
 // LstatIfPossible tries to use LstatIfPossible if the filesystem supports it, otherwise it falls back to Stat.
 func LstatIfPossible(fs afero.Fs, name string) (os.FileInfo, error) {
+	fi, _, err := lstatIfPossible(fs, name)
+	return fi, err
+}
+
+func lstatIfPossible(fs afero.Fs, name string) (os.FileInfo, bool, error) {
+	if ofs, ok := fs.(*overlayfs.OverlayFs); ok {
+		return lstatOverlayFs(ofs, name)
+	}
 	if lstater, ok := fs.(afero.Lstater); ok {
-		fi, _, err := lstater.LstatIfPossible(name)
-		return fi, err
+		return lstater.LstatIfPossible(name)
 	}
 	fi, err := fs.Stat(name)
-	return fi, err
+	return fi, false, err
+}
+
+var (
+	_ afero.Lstater                = overlayLstaterFs{}
+	_ overlayfs.FilesystemIterator = overlayLstaterFs{}
+)
+
+// overlayLstaterFs wraps an *overlayfs.OverlayFs so that LstatIfPossible
+// does not follow symlinks.
+// OverlayFs.LstatIfPossible in github.com/bep/overlayfs v0.10.0 always
+// calls Stat, which follows symlinks (fixed upstream in v0.11.0).
+type overlayLstaterFs struct {
+	*overlayfs.OverlayFs
+}
+
+func newOverlayLstaterFs(fs afero.Fs) afero.Fs {
+	if ofs, ok := fs.(*overlayfs.OverlayFs); ok {
+		return overlayLstaterFs{OverlayFs: ofs}
+	}
+	return fs
+}
+
+func (fs overlayLstaterFs) LstatIfPossible(name string) (os.FileInfo, bool, error) {
+	return lstatOverlayFs(fs.OverlayFs, name)
+}
+
+// lstatOverlayFs is a port of OverlayFs.LstatIfPossible from github.com/bep/overlayfs v0.11.0:
+// the filesystems are checked in order until found, calling LstatIfPossible if possible.
+func lstatOverlayFs(ofs *overlayfs.OverlayFs, name string) (os.FileInfo, bool, error) {
+	for i := range ofs.NumFilesystems() {
+		if fi, ok, err := lstatOverlayFsRecursive(ofs.Filesystem(i), name); err == nil || !os.IsNotExist(err) {
+			return fi, ok, err
+		}
+	}
+	return nil, false, os.ErrNotExist
+}
+
+func lstatOverlayFsRecursive(fs afero.Fs, name string) (os.FileInfo, bool, error) {
+	if fi, ok, err := lstatIfPossible(fs, name); err == nil || !os.IsNotExist(err) {
+		return fi, ok, err
+	}
+	if fsi, ok := fs.(overlayfs.FilesystemIterator); ok {
+		for i := range fsi.NumFilesystems() {
+			if fi, ok, err := lstatOverlayFsRecursive(fsi.Filesystem(i), name); err == nil || !os.IsNotExist(err) {
+				return fi, ok, err
+			}
+		}
+	}
+	return nil, false, os.ErrNotExist
 }

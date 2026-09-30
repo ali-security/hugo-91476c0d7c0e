@@ -95,13 +95,20 @@ func TestStat(t *testing.T) {
 	}{
 		{filepath.FromSlash("/f/f1.txt"), int64(10)},
 		{filepath.FromSlash("f/f1.txt"), int64(10)},
-		{"b", nil},
+		{"b", false},
 		{"", nil},
 	} {
 		result, err := ns.Stat(test.filename)
 
 		if test.expect == nil {
 			b.Assert(err, qt.Not(qt.IsNil))
+			continue
+		}
+
+		if bb, ok := test.expect.(bool); ok && !bb {
+			// Non-existing file.
+			b.Assert(err, qt.IsNil)
+			b.Assert(result, qt.IsNil)
 			continue
 		}
 
