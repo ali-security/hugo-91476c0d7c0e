@@ -386,3 +386,32 @@ Attributes: {{ .Attributes }}|Type: {{ .Type }}|
 	b.Assert(err, qt.Not(qt.IsNil))
 	b.Assert(err.Error(), qt.Contains, "p1.md:7:9\": failed to parse Markdown attributes; you may need to quote the values")
 }
+
+func TestCodeblockLangEscape(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- hugo.toml --
+-- layouts/single.html --
+{{ .Content }}
+-- content/p1.md --
+---
+title: "p1"
+---
+
+## Simple
+
+§§§a"><script>A</script>
+Some code.
+§§§
+
+§§§a"><script>B</script> {hl_inline=true}
+Some code.
+§§§
+
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html", "! <script>")
+}
