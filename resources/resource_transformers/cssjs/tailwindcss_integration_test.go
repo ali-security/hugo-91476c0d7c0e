@@ -14,11 +14,15 @@
 package cssjs_test
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/bep/logg"
 	qt "github.com/frankban/quicktest"
 	"github.com/gohugoio/hugo/htesting"
+	"github.com/gohugoio/hugo/hugofs"
 	"github.com/gohugoio/hugo/hugolib"
 )
 
@@ -133,4 +137,118 @@ target = 'assets/css'
 	b.Assert(err, qt.IsNotNil)
 	b.Assert(err.Error(), qt.Contains, "Can't resolve 'colors/red.css'")
 	b.Assert(err.Error(), qt.Contains, "You may want to set the 'disableInlineImports' option to false")
+}
+
+// CVE-2026-44301: Node tools must not be able to read or write files outside the project.
+func TestTailwindCSSNodePermissions(t *testing.T) {
+	if !htesting.IsCI() {
+		t.Skip("Skip long running test when running locally")
+	}
+
+	const packageJSON = `
+-- package.json --
+{
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.7",
+    "tailwindcss": "^4.1.7"
+  }
+}
+`
+
+	// A plugin (e.g. provided by a theme) reads and writes files outside of the project.
+	t.Run("Plugin", func(t *testing.T) {
+		for _, disable := range []bool{true, false} {
+			t.Run(fmt.Sprintf("disable=%t", disable), func(t *testing.T) {
+				c := qt.New(t)
+				secretFilename, writeFilename := nodePermissionsOutsideProject(c)
+
+				files := fmt.Sprintf(`
+-- hugo.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+[security.node.permissions]
+disable = %t
+-- probe.js --
+%s
+module.exports = function () {};
+-- assets/css/main.css --
+@import "tailwindcss";
+@plugin "./probe.js";
+-- layouts/home.html --
+{{ with resources.Get "css/main.css" | css.TailwindCSS }}CSS: {{ .Content | safeCSS }}|{{ end }}
+`, disable, nodePermissionsProbeJS(secretFilename, writeFilename)) + packageJSON
+
+				b := hugolib.NewIntegrationTestBuilder(
+					hugolib.IntegrationTestConfig{
+						T:               c,
+						TxtarString:     files,
+						NeedsOsFS:       true,
+						NeedsNpmInstall: true,
+						LogLevel:        logg.LevelInfo,
+					}).Build()
+
+				b.AssertFileContent("public/index.html", "/*! tailwindcss v4.")
+
+				_, err := os.Stat(writeFilename)
+				if disable {
+					// Without the Node.js permission model, the tool can access the file system outside of the project.
+					b.AssertLogContains("NodePermissionsProbe: READ_ALLOWED WRITE_ALLOWED")
+					c.Assert(err, qt.IsNil)
+				} else {
+					b.AssertLogContains("NodePermissionsProbe: READ_ERR_ACCESS_DENIED WRITE_ERR_ACCESS_DENIED")
+					c.Assert(os.IsNotExist(err), qt.IsTrue)
+				}
+			})
+		}
+	})
+
+	// A stylesheet (e.g. provided by a theme) imports a file outside of the project.
+	t.Run("Import", func(t *testing.T) {
+		for _, disable := range []bool{true, false} {
+			t.Run(fmt.Sprintf("disable=%t", disable), func(t *testing.T) {
+				c := qt.New(t)
+				workingDir, clean, err := htesting.CreateTempDir(hugofs.Os, "hugo-integration-test")
+				c.Assert(err, qt.IsNil)
+				c.Cleanup(clean)
+
+				outsideCSSFilename := filepath.Join(c.TempDir(), "outside.css")
+				c.Assert(os.WriteFile(outsideCSSFilename, []byte(".leaked-outside-content { color: red; }\n"), 0o644), qt.IsNil)
+				rel, err := filepath.Rel(workingDir, outsideCSSFilename)
+				c.Assert(err, qt.IsNil)
+
+				files := fmt.Sprintf(`
+-- hugo.toml --
+disableKinds = ['page','rss','section','sitemap','taxonomy','term']
+[security.node.permissions]
+disable = %t
+-- assets/css/main.css --
+@import "tailwindcss";
+@import %q;
+-- layouts/home.html --
+{{ with resources.Get "css/main.css" | css.TailwindCSS (dict "disableInlineImports" true) }}CSS: {{ .Content | safeCSS }}|{{ end }}
+`, disable, filepath.ToSlash(rel)) + packageJSON
+
+				b, err := hugolib.NewIntegrationTestBuilder(
+					hugolib.IntegrationTestConfig{
+						T:               c,
+						TxtarString:     files,
+						NeedsOsFS:       true,
+						NeedsNpmInstall: true,
+						LogLevel:        logg.LevelInfo,
+						WorkingDir:      workingDir,
+					}).BuildE()
+
+				if disable {
+					// Without the Node.js permission model, the tool can read files outside of the project.
+					c.Assert(err, qt.IsNil)
+					b.AssertFileContent("public/index.html", "leaked-outside-content")
+					return
+				}
+				if err != nil {
+					c.Assert(err.Error(), qt.Not(qt.Contains), "leaked-outside-content")
+				} else {
+					b.AssertFileContent("public/index.html", "! leaked-outside-content")
+				}
+			})
+		}
+	})
 }

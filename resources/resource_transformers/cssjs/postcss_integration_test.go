@@ -15,6 +15,7 @@ package cssjs_test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -166,22 +167,70 @@ func TestTransformPostCSSError(t *testing.T) {
 	c.Assert(err.Error(), qt.Contains, "a.css:4:2")
 }
 
-func TestTransformPostCSSNotInstalledError(t *testing.T) {
+// nodePermissionsProbeJS returns a JavaScript snippet that tries to read
+// readFilename and write writeFilename and logs the outcome to stderr.
+func nodePermissionsProbeJS(readFilename, writeFilename string) string {
+	return fmt.Sprintf(`
+const hugoProbeFs = require("fs");
+let hugoProbeRead = "READ_ALLOWED";
+try { hugoProbeFs.readFileSync(%q); } catch (e) { hugoProbeRead = "READ_" + e.code; }
+let hugoProbeWrite = "WRITE_ALLOWED";
+try { hugoProbeFs.writeFileSync(%q, "pwned"); } catch (e) { hugoProbeWrite = "WRITE_" + e.code; }
+console.error("NodePermissionsProbe:", hugoProbeRead, hugoProbeWrite);
+`, readFilename, writeFilename)
+}
+
+// nodePermissionsOutsideProject creates a secret file and the path of a file to be
+// written, both in a directory outside of the Hugo project.
+func nodePermissionsOutsideProject(t testing.TB) (secretFilename, writeFilename string) {
+	t.Helper()
+	outsideDir := t.TempDir()
+	secretFilename = filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(secretFilename, []byte("hugo-secret-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeFilename = filepath.Join(outsideDir, "pwned.txt")
+	return
+}
+
+// CVE-2026-44301: Node tools must not be able to read or write files outside the project.
+func TestTransformPostCSSNodePermissions(t *testing.T) {
 	if !htesting.IsCI() {
 		t.Skip("Skip long running test when running locally")
 	}
 
-	c := qt.New(t)
+	for _, disable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("disable=%t", disable), func(t *testing.T) {
+			c := qt.New(t)
+			secretFilename, writeFilename := nodePermissionsOutsideProject(c)
 
-	s, err := hugolib.NewIntegrationTestBuilder(
-		hugolib.IntegrationTestConfig{
-			T:           c,
-			NeedsOsFS:   true,
-			TxtarString: postCSSIntegrationTestFiles,
-		}).BuildE()
+			files := strings.Replace(postCSSIntegrationTestFiles, "-- postcss.config.js --\n", "-- postcss.config.js --\n"+nodePermissionsProbeJS(secretFilename, writeFilename), 1)
+			if disable {
+				files = strings.Replace(files, "useResourceCacheWhen = 'never'\n", "useResourceCacheWhen = 'never'\n[security.node.permissions]\ndisable = true\n", 1)
+			}
 
-	s.AssertIsFileError(err)
-	c.Assert(err.Error(), qt.Contains, `binary with name "postcss" not found using npx`)
+			b := hugolib.NewIntegrationTestBuilder(
+				hugolib.IntegrationTestConfig{
+					T:               c,
+					NeedsOsFS:       true,
+					NeedsNpmInstall: true,
+					LogLevel:        logg.LevelInfo,
+					TxtarString:     files,
+				}).Build()
+
+			b.AssertFileContent("public/index.html", "Styles Content: Len: 770917|")
+
+			_, err := os.Stat(writeFilename)
+			if disable {
+				// Without the Node.js permission model, the tool can access the file system outside of the project.
+				b.AssertLogContains("NodePermissionsProbe: READ_ALLOWED WRITE_ALLOWED")
+				c.Assert(err, qt.IsNil)
+			} else {
+				b.AssertLogContains("NodePermissionsProbe: READ_ERR_ACCESS_DENIED WRITE_ERR_ACCESS_DENIED")
+				c.Assert(os.IsNotExist(err), qt.IsTrue)
+			}
+		})
+	}
 }
 
 // #9895
