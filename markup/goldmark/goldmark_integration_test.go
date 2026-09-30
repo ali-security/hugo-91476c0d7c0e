@@ -961,3 +961,54 @@ hidden
 	)
 	b.AssertLogContains("! WARN")
 }
+
+func TestRenderLinkDefaultDangerous(t *testing.T) {
+	t.Parallel()
+
+	/*
+		Content: <p>Link: <a href="javascript:alert(1)">Click me</a>
+		AutoLink: <a href="">javascript:alert(1)</a>
+		Image: <img src="javascript:alert(1)" alt="alt"></p>
+	*/
+
+	files := `
+-- content/p1.md --
+---
+title: "p1"
+---
+Link: [Click me](&#106;avascript:alert(1))
+AutoLink: <javascript:alert(2)>
+Image: ![alt](&#106;avascript:alert(3))
+-- layouts/all.html --
+Content: {{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/p1/index.html",
+		`! alert(1)"`,
+		`! href="javascript:alert(2)"`,
+		`! alert(3)"`,
+	)
+}
+
+// Issue 14715
+func TestRenderLinkDefaultAmpersand(t *testing.T) {
+	t.Parallel()
+
+	files := `
+-- content/_index.md --
+---
+title: "Home"
+---
+[foo](https://a.com/?a=1&b=2)
+-- layouts/home.html --
+{{ .Content }}
+`
+
+	b := hugolib.Test(t, files)
+
+	b.AssertFileContent("public/index.html",
+		`<a href="https://a.com/?a=1&amp;b=2">foo</a>`,
+	)
+}
